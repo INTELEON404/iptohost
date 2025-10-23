@@ -1,21 +1,21 @@
-# ipTOhost
+# iptohost
 
-**ipTOhost** is a fast and flexible tool for resolving IPs and hosts to their SSL/TLS information and DNS PTR records. It’s designed for penetration testers, bug hunters, and security researchers who need to quickly gather host information.
+**iptohost** is a fast and flexible tool for resolving IPs and hosts to their SSL/TLS information and DNS PTR records. It’s designed for penetration testers, bug hunters, and security researchers who need to quickly gather host information.
 
 ---
 
 ## Features
 
-- Fetch **SSL/TLS certificate info** (SANs and Common Name).
-- Perform **PTR (reverse DNS) lookups**.
-- Support **custom DNS resolver** (IP, port, UDP/TCP).
-- Multi-threaded workers for high-speed scanning.
-- Accepts **stdin** or input **file**.
-- Optional **SNI override** for TLS handshake.
-- Optional **JSON output** for automated parsing.
-- Optional **delay** between requests.
-- Handles panics and errors gracefully.
-- Configurable **TLS verification** (`-insecure`).
+- Fetch **SSL/TLS certificate info** (SANs and Common Name)
+- Perform **PTR (reverse DNS) lookups**
+- Support **custom DNS resolver** (IP, port, UDP/TCP)
+- Multi-threaded workers for high-speed scanning
+- Accepts **stdin** or input **file**
+- Optional **SNI override** for TLS handshake
+- Optional **JSON output** for automated parsing
+- Optional **delay** between requests
+- Handles panics and errors gracefully
+- Configurable **TLS verification** (`-insecure`)
 
 ---
 
@@ -23,44 +23,43 @@
 
 ```bash
 go install github.com/inteleon404/iptohost@latest
-
 ````
 
 ---
 
 ## Usage
 
-### From a file:
+### From a file
 
 ```bash
 iptohost -i targets.txt -t 32
 ```
 
-### From stdin:
+### From stdin
 
 ```bash
 cat targets.txt | iptohost -t 32
 ```
 
-### With custom DNS resolver:
+### With custom DNS resolver
 
 ```bash
 iptohost -i targets.txt -r 8.8.8.8 -p 53 -protocol udp
 ```
 
-### Override SNI:
+### Override SNI
 
 ```bash
 iptohost -i targets.txt -sni example.com
 ```
 
-### JSON output:
+### JSON output
 
 ```bash
 iptohost -i targets.txt -json
 ```
 
-### Add delay between requests:
+### Add delay between requests
 
 ```bash
 iptohost -i targets.txt -delay 100ms
@@ -116,15 +115,19 @@ iptohost -i targets.txt -delay 100ms
 
 MIT License
 
-```
-
 ---
 
-If you want, I can also create a **complete GitHub-ready project structure** for `iptohost` including:
+## Project Structure
 
 ```
-
 iptohost/
 ├── main.go
 ├── go.mod
 ├── README.md
+```
+
+
+
+---
+
+
