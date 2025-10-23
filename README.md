@@ -22,9 +22,8 @@
 ## Installation
 
 ```bash
-git clone https://github.com/inteleon404/ipTOhost.git
-cd hakip2host
-go build -o hakip2host main.go
+go install github.com/inteleon404/iptohost@latest
+
 ````
 
 ---
@@ -34,37 +33,37 @@ go build -o hakip2host main.go
 ### From a file:
 
 ```bash
-./ipTOhost -i targets.txt -t 32
+iptohost -i targets.txt -t 32
 ```
 
 ### From stdin:
 
 ```bash
-cat targets.txt | ./hakip2host -t 32
+cat targets.txt | iptohost -t 32
 ```
 
 ### With custom DNS resolver:
 
 ```bash
-./ipTOhost -i targets.txt -r 8.8.8.8 -p 53 -protocol udp
+iptohost -i targets.txt -r 8.8.8.8 -p 53 -protocol udp
 ```
 
 ### Override SNI:
 
 ```bash
-./ipTOhost -i targets.txt -sni example.com
+iptohost -i targets.txt -sni example.com
 ```
 
 ### JSON output:
 
 ```bash
-./ipTOhost -i targets.txt -json
+iptohost -i targets.txt -json
 ```
 
 ### Add delay between requests:
 
 ```bash
-./ipTOhost -i targets.txt -delay 100ms
+iptohost -i targets.txt -delay 100ms
 ```
 
 ---
@@ -121,11 +120,11 @@ MIT License
 
 ---
 
-If you want, I can also create a **complete GitHub-ready project structure** for `ipTOhost` including:
+If you want, I can also create a **complete GitHub-ready project structure** for `iptohost` including:
 
 ```
 
-ipTOhost/
+iptohost/
 ├── main.go
 ├── go.mod
 ├── README.md
