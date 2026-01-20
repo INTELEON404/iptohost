@@ -1,16 +1,13 @@
 <div align="center">
   <img src="https://github.com/INTELEON404/Template/blob/main/iptohost.png" alt="iptohost Logo" />
   
-  <h1>iptohost</h1>
-  <p><strong>Fast IP to Hostname Discovery Tool</strong></p>
-  
+  ---
   [![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)](https://github.com/inteleon404/iptohost)
   [![Go Version](https://img.shields.io/badge/go-%3E%3D1.18-00ADD8.svg)](https://golang.org/)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
   [![Platform](https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey.svg)](https://github.com/inteleon404/iptohost)
 </div>
 
----
 
 ## 📖 About
 
