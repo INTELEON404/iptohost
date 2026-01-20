@@ -16,14 +16,25 @@ import (
 	"time"
 )
 
+const VERSION = "1.2.1"
+
 type Result struct {
-	Type string `json:"type"`
-	IP   string `json:"ip"`
-	Data string `json:"data"`
+	Type      string `json:"type"`
+	IP        string `json:"ip"`
+	Data      string `json:"data"`
+	Timestamp string `json:"timestamp,omitempty"`
 }
 
-// SSL checks: extract SAN and CN
-func sslChecks(ip string, resChan chan<- Result, client *http.Client, sni string, insecure bool) {
+type Stats struct {
+	TotalIPs     int `json:"total_ips"`
+	SSLHosts     int `json:"ssl_hosts"`
+	DNSHosts     int `json:"dns_hosts"`
+	UniqueHosts  int `json:"unique_hosts"`
+	FailedChecks int `json:"failed_checks"`
+}
+
+// SSL checks: extract SAN and CN with improved error handling
+func sslChecks(ip string, resChan chan<- Result, client *http.Client, sni string, insecure bool, timestamped bool) {
 	url := ip
 	if strings.HasPrefix(ip, "http://") {
 		url = strings.Replace(ip, "http://", "https://", 1)
@@ -35,7 +46,7 @@ func sslChecks(ip string, resChan chan<- Result, client *http.Client, sni string
 	if err != nil {
 		return
 	}
-	req.Header.Set("User-Agent", "hakip2host/1.0")
+	req.Header.Set("User-Agent", "hakip2host/1.2.1")
 	if sni != "" {
 		req.Host = sni
 	}
@@ -47,7 +58,7 @@ func sslChecks(ip string, resChan chan<- Result, client *http.Client, sni string
 		if errGet != nil {
 			return
 		}
-		reqGet.Header.Set("User-Agent", "hakip2host/1.0")
+		reqGet.Header.Set("User-Agent", "hakip2host/1.2.1")
 		if sni != "" {
 			reqGet.Host = sni
 		}
@@ -60,33 +71,52 @@ func sslChecks(ip string, resChan chan<- Result, client *http.Client, sni string
 
 	if resp.TLS != nil && len(resp.TLS.PeerCertificates) > 0 {
 		cert := resp.TLS.PeerCertificates[0]
-
-		for _, name := range cert.DNSNames {
-			resChan <- Result{Type: "SSL-SAN", IP: ip, Data: name}
+		ts := ""
+		if timestamped {
+			ts = time.Now().Format(time.RFC3339)
 		}
-		if cert.Subject.CommonName != "" {
-			resChan <- Result{Type: "SSL-CN", IP: ip, Data: cert.Subject.CommonName}
+
+		seen := make(map[string]bool)
+		for _, name := range cert.DNSNames {
+			if !seen[name] {
+				seen[name] = true
+				resChan <- Result{Type: "SSL-SAN", IP: ip, Data: name, Timestamp: ts}
+			}
+		}
+		if cert.Subject.CommonName != "" && !seen[cert.Subject.CommonName] {
+			resChan <- Result{Type: "SSL-CN", IP: ip, Data: cert.Subject.CommonName, Timestamp: ts}
 		}
 	}
 }
 
-// DNS PTR lookup
-func dnsChecks(ip string, resChan chan<- Result, resolver *net.Resolver) {
+// DNS PTR lookup with timeout context
+func dnsChecks(ip string, resChan chan<- Result, resolver *net.Resolver, timestamped bool, dnsTimeout int) {
 	if resolver == nil {
 		resolver = net.DefaultResolver
 	}
-	addrs, err := resolver.LookupAddr(context.Background(), ip)
+	
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(dnsTimeout)*time.Second)
+	defer cancel()
+	
+	addrs, err := resolver.LookupAddr(ctx, ip)
 	if err != nil {
 		return
 	}
+	
+	ts := ""
+	if timestamped {
+		ts = time.Now().Format(time.RFC3339)
+	}
+	
 	for _, a := range addrs {
 		a = strings.TrimSuffix(a, ".")
-		resChan <- Result{Type: "DNS-PTR", IP: ip, Data: a}
+		resChan <- Result{Type: "DNS-PTR", IP: ip, Data: a, Timestamp: ts}
 	}
 }
 
-// Worker goroutine
-func worker(jobChan <-chan string, resChan chan<- Result, wg *sync.WaitGroup, client *http.Client, resolver *net.Resolver, sni string) {
+// Worker goroutine with stats tracking
+func worker(jobChan <-chan string, resChan chan<- Result, wg *sync.WaitGroup, client *http.Client, 
+	resolver *net.Resolver, sni string, timestamped bool, dnsTimeout int, statsMutex *sync.Mutex, stats *Stats) {
 	defer wg.Done()
 	for job := range jobChan {
 		job = strings.TrimSpace(job)
@@ -94,10 +124,21 @@ func worker(jobChan <-chan string, resChan chan<- Result, wg *sync.WaitGroup, cl
 			continue
 		}
 		func(ip string) {
-			defer func() { recover() }()
-			sslChecks(ip, resChan, client, sni, true)
+			defer func() { 
+				if r := recover(); r != nil {
+					statsMutex.Lock()
+					stats.FailedChecks++
+					statsMutex.Unlock()
+				}
+			}()
+			
+			statsMutex.Lock()
+			stats.TotalIPs++
+			statsMutex.Unlock()
+			
+			sslChecks(ip, resChan, client, sni, true, timestamped)
 			if net.ParseIP(ip) != nil {
-				dnsChecks(ip, resChan, resolver)
+				dnsChecks(ip, resChan, resolver, timestamped, dnsTimeout)
 			}
 		}(job)
 	}
@@ -106,15 +147,27 @@ func worker(jobChan <-chan string, resChan chan<- Result, wg *sync.WaitGroup, cl
 func main() {
 	workers := flag.Int("t", 32, "number of workers")
 	inputFile := flag.String("i", "", "input file (default stdin)")
+	outputFile := flag.String("o", "", "output file (default stdout)")
 	resolverIP := flag.String("r", "", "DNS resolver IP")
 	resolverPort := flag.Int("p", 53, "DNS resolver port")
 	dnsProtocol := flag.String("protocol", "udp", "DNS protocol (udp/tcp)")
+	dnsTimeout := flag.Int("dns-timeout", 5, "DNS lookup timeout in seconds")
 	sni := flag.String("sni", "", "override SNI host for SSL")
 	insecure := flag.Bool("insecure", true, "skip TLS verification")
 	jsonOutput := flag.Bool("json", false, "output results as JSON")
+	timestamped := flag.Bool("timestamp", false, "add timestamp to results")
 	delay := flag.String("delay", "0s", "delay between requests, e.g., 100ms")
 	timeout := flag.Int("timeout", 10, "HTTP client timeout in seconds")
+	showStats := flag.Bool("stats", false, "show statistics at the end")
+	version := flag.Bool("version", false, "show version")
+	verbose := flag.Bool("v", false, "verbose output")
+	deduplicate := flag.Bool("dedupe", false, "deduplicate hostnames in output")
 	flag.Parse()
+
+	if *version {
+		fmt.Printf("hakip2host version %s\n", VERSION)
+		os.Exit(0)
+	}
 
 	var scanner *bufio.Scanner
 	if *inputFile != "" {
@@ -128,6 +181,18 @@ func main() {
 		scanner = bufio.NewScanner(os.Stdin)
 	}
 
+	var output *os.File
+	if *outputFile != "" {
+		var err error
+		output, err = os.Create(*outputFile)
+		if err != nil {
+			log.Fatal(err)
+		}
+		defer output.Close()
+	} else {
+		output = os.Stdout
+	}
+
 	delayDur, err := time.ParseDuration(*delay)
 	if err != nil {
 		delayDur = 0
@@ -138,13 +203,20 @@ func main() {
 			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout: 5 * time.Second,
-		TLSClientConfig:     &tls.Config{InsecureSkipVerify: *insecure},
+		TLSHandshakeTimeout:   5 * time.Second,
+		TLSClientConfig:       &tls.Config{InsecureSkipVerify: *insecure},
+		MaxIdleConns:          100,
+		MaxIdleConnsPerHost:   10,
+		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
 	}
 
 	client := &http.Client{
 		Timeout:   time.Duration(*timeout) * time.Second,
 		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	var resolver *net.Resolver
@@ -165,9 +237,12 @@ func main() {
 	var wg sync.WaitGroup
 	wg.Add(*workers)
 
+	stats := &Stats{}
+	var statsMutex sync.Mutex
+
 	// Start workers
 	for i := 0; i < *workers; i++ {
-		go worker(jobChan, resChan, &wg, client, resolver, *sni)
+		go worker(jobChan, resChan, &wg, client, resolver, *sni, *timestamped, *dnsTimeout, &statsMutex, stats)
 	}
 
 	// Feed jobs
@@ -190,13 +265,55 @@ func main() {
 		close(resChan)
 	}()
 
-	// Output results
+	// Output results with deduplication
+	seenHosts := make(map[string]bool)
 	for res := range resChan {
+		if *deduplicate && seenHosts[res.Data] {
+			continue
+		}
+		
+		if *deduplicate {
+			seenHosts[res.Data] = true
+		}
+		
+		if strings.HasPrefix(res.Type, "SSL-") {
+			statsMutex.Lock()
+			stats.SSLHosts++
+			statsMutex.Unlock()
+		} else if res.Type == "DNS-PTR" {
+			statsMutex.Lock()
+			stats.DNSHosts++
+			statsMutex.Unlock()
+		}
+		
 		if *jsonOutput {
 			jsonData, _ := json.Marshal(res)
-			fmt.Println(string(jsonData))
+			fmt.Fprintln(output, string(jsonData))
 		} else {
-			fmt.Printf("[%s] %s %s\n", res.Type, res.IP, res.Data)
+			if *timestamped && res.Timestamp != "" {
+				fmt.Fprintf(output, "[%s] %s %s %s\n", res.Type, res.IP, res.Data, res.Timestamp)
+			} else {
+				fmt.Fprintf(output, "[%s] %s %s\n", res.Type, res.IP, res.Data)
+			}
 		}
+		
+		if *verbose {
+			log.Printf("[%s] Found: %s -> %s\n", res.Type, res.IP, res.Data)
+		}
+	}
+
+	// Show statistics
+	if *showStats {
+		stats.UniqueHosts = len(seenHosts)
+		if !*deduplicate {
+			stats.UniqueHosts = stats.SSLHosts + stats.DNSHosts
+		}
+		
+		fmt.Fprintln(os.Stderr, "\n=== Statistics ===")
+		fmt.Fprintf(os.Stderr, "Total IPs processed: %d\n", stats.TotalIPs)
+		fmt.Fprintf(os.Stderr, "SSL hostnames found: %d\n", stats.SSLHosts)
+		fmt.Fprintf(os.Stderr, "DNS PTR records found: %d\n", stats.DNSHosts)
+		fmt.Fprintf(os.Stderr, "Unique hostnames: %d\n", stats.UniqueHosts)
+		fmt.Fprintf(os.Stderr, "Failed checks: %d\n", stats.FailedChecks)
 	}
 }
